@@ -15,7 +15,7 @@ import { ObjectConfiguration } from '../base/configuration';
 import { ManagedResolverFactory } from './common/managedResolverFactory';
 import { NotFoundError } from '../utils/errorFactory';
 
-import * as assert from 'assert';
+import assert = require('assert');
 
 export const ContextEvent = {
   START: 'start',
@@ -25,9 +25,10 @@ export const ContextEvent = {
 };
 
 const PREFIX = '_id_default_';
-// const CWD = process.cwd();
 
 export class ObjectDefinitionRegistry extends Map implements IObjectDefinitionRegistry {
+  private singletonIds = [];
+
   get identifiers() {
     const ids = [];
     for (const key of this.keys()) {
@@ -42,6 +43,10 @@ export class ObjectDefinitionRegistry extends Map implements IObjectDefinitionRe
     return this.size;
   }
 
+  getSingletonDefinitionIds(): ObjectIdentifier[] {
+    return this.singletonIds;
+  }
+
   getDefinitionByName(name: string): IObjectDefinition[] {
     const definitions = [];
     for (const v of this.values()) {
@@ -54,6 +59,9 @@ export class ObjectDefinitionRegistry extends Map implements IObjectDefinitionRe
   }
 
   registerDefinition(identifier: ObjectIdentifier, definition: IObjectDefinition) {
+    if (definition.isSingletonScope()) {
+      this.singletonIds.push(identifier);
+    }
     this.set(identifier, definition);
   }
 
@@ -163,7 +171,7 @@ export class BaseApplicationContext implements IApplicationContext, IObjectFacto
     if (this.lifeCycle && this.lifeCycle.onStart) {
       await this.lifeCycle.onStart();
     }
-    return this.refreshAsync();
+    await this.refreshAsync();
   }
 
   async refreshAsync(): Promise<void> {
@@ -233,6 +241,7 @@ export class BaseApplicationContext implements IApplicationContext, IObjectFacto
     if (!definition) {
       throw new NotFoundError(identifier);
     }
+
     return this.getManagedResolverFactory().createAsync(definition, args);
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "injection",
-  "version": "1.7.7",
+  "version": "1.8.5",
   "description": "A New IoC Container For All Node.js Application",
   "main": "dist/index",
   "typings": "dist/index.d.ts",
@@ -50,7 +50,6 @@
     "xmldom": "^0.1.27"
   },
   "dependencies": {
-    "await-first": "^1.0.0",
     "camelcase": "^5.0.0",
     "co": "^4.6.0",
     "debug": "^4.1.1",

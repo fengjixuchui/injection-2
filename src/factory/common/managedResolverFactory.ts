@@ -1,7 +1,6 @@
 /**
  * 管理对象解析构建
  */
-import { EventEmitter } from 'events';
 import * as _ from '../../utils/lodashWrap';
 import { KEYS, VALUE_TYPE } from './constants';
 import {
@@ -28,8 +27,6 @@ import { ObjectConfiguration } from '../../base/configuration';
 import { Autowire } from './autowire';
 import { NotFoundError } from '../../utils/errorFactory';
 
-const awaitFirst = require('await-first');
-const SINGLETON_CREATED = '_single_created';
 /**
  * 所有解析器基类
  */
@@ -292,7 +289,7 @@ class ObjectResolver extends BaseManagedResolver {
 /**
  * 解析工厂
  */
-export class ManagedResolverFactory extends EventEmitter {
+export class ManagedResolverFactory {
   private resolvers = {};
   private _props = null;
   private creating = new Map<string, boolean>();
@@ -302,7 +299,6 @@ export class ManagedResolverFactory extends EventEmitter {
   beforeCreateHandler = [];
 
   constructor(context: IApplicationContext) {
-    super();
 
     this.context = context;
 
@@ -372,7 +368,13 @@ export class ManagedResolverFactory extends EventEmitter {
       this.singletonCache.has(definition.id)) {
       return this.singletonCache.get(definition.id);
     }
+    // 如果非 null 表示已经创建 proxy
+    let inst = this.createProxyReference(definition);
+    if (inst) {
+      return inst;
+    }
 
+    this.compareAndSetCreateStatus(definition);
     // 预先初始化依赖
     if (definition.hasDependsOn()) {
       for (const dep of definition.dependsOn) {
@@ -397,7 +399,7 @@ export class ManagedResolverFactory extends EventEmitter {
       handler.call(this, Clzz, constructorArgs, this.context);
     }
 
-    const inst = definition.creator.doConstruct(Clzz, constructorArgs);
+    inst = definition.creator.doConstruct(Clzz, constructorArgs);
 
     // binding ctx object
     if (definition.isRequestScope() && definition.constructor.name === 'ObjectDefinition') {
@@ -419,6 +421,7 @@ export class ManagedResolverFactory extends EventEmitter {
             const className = definition.path.name;
             error.updateErrorMsg(className);
           }
+          this.removeCreateStatus(definition, true);
           throw error;
         }
       }
@@ -444,6 +447,7 @@ export class ManagedResolverFactory extends EventEmitter {
     if (definition.isRequestScope() && definition.id) {
       this.context.registry.registerObject(definition.id, inst);
     }
+    this.removeCreateStatus(definition, true);
 
     return inst;
   }
@@ -459,12 +463,13 @@ export class ManagedResolverFactory extends EventEmitter {
       return this.singletonCache.get(definition.id);
     }
 
-    let inst = await this.compareAndSetCreating(definition);
-    // 如果非 null 表示已经创建成功
+    // 如果非 null 表示已经创建 proxy
+    let inst = this.createProxyReference(definition);
     if (inst) {
       return inst;
     }
 
+    this.compareAndSetCreateStatus(definition);
     // 预先初始化依赖
     if (definition.hasDependsOn()) {
       for (const dep of definition.dependsOn) {
@@ -491,7 +496,7 @@ export class ManagedResolverFactory extends EventEmitter {
 
     inst = await definition.creator.doConstructAsync(Clzz, constructorArgs);
     if (!inst) {
-      this.removeCreating(definition, false);
+      this.removeCreateStatus(definition, false);
       throw new Error(`${definition.id} config no valid path`);
     }
 
@@ -515,7 +520,7 @@ export class ManagedResolverFactory extends EventEmitter {
             const className = definition.path.name;
             error.updateErrorMsg(className);
           }
-          this.removeCreating(definition, false);
+          this.removeCreateStatus(definition, false);
           throw error;
         }
       }
@@ -535,13 +540,13 @@ export class ManagedResolverFactory extends EventEmitter {
 
     if (definition.isSingletonScope() && definition.id) {
       this.singletonCache.set(definition.id, inst);
-      this.removeCreating(definition, true);
     }
 
     // for request scope
     if (definition.isRequestScope() && definition.id) {
       this.context.registry.registerObject(definition.id, inst);
     }
+    this.removeCreateStatus(definition, true);
 
     return inst;
   }
@@ -565,33 +570,99 @@ export class ManagedResolverFactory extends EventEmitter {
     this.afterCreateHandler.push(fn);
   }
   /**
-   * 判断是否需要等待单例异步初始化
-   * @param definition 单例定义
-   */
-  private async compareAndSetCreating(definition: IObjectDefinition): Promise<any> {
-    if (definition.isSingletonScope() && definition.id) {
-      if (this.creating.has(definition.id)) {
-        const e = await awaitFirst(this, `${definition.id}${SINGLETON_CREATED}`);
-        // 初始化成功
-        if (e.args[0]) {
-          return this.singletonCache.get(definition.id);
-        }
-        return null;
-      }
-      this.creating.set(definition.id, true);
-    }
-    return null;
-  }
-  /**
    * 触发单例初始化结束事件
    * @param definition 单例定义
    * @param success 成功 or 失败
    */
-  private removeCreating(definition: IObjectDefinition, success: boolean): boolean {
-    if (definition.isSingletonScope() && this.creating.has(definition.id)) {
+  private removeCreateStatus(definition: IObjectDefinition, success: boolean): boolean {
+    // 如果map中存在表示需要设置状态
+    if (this.creating.has(definition.id)) {
       this.creating.set(definition.id, false);
-      this.emit(`${definition.id}${SINGLETON_CREATED}`, success);
     }
     return true;
+  }
+
+  public isCreating(definition: IObjectDefinition) {
+    return this.creating.has(definition.id) && this.creating.get(definition.id);
+  }
+
+  private compareAndSetCreateStatus(definition: IObjectDefinition) {
+    if (!this.creating.has(definition.id) || !this.creating.get(definition.id)) {
+      this.creating.set(definition.id, true);
+    }
+  }
+  /**
+   * 创建对象定义的代理访问逻辑
+   * @param definition 对象定义
+   */
+  private createProxyReference(definition: IObjectDefinition): any {
+    if (this.isCreating(definition)) {
+      // 非循环依赖的允许重新创建对象
+      if (!this.depthFirstSearch(definition.id, definition)) {
+        return null;
+      }
+      // 创建代理对象
+      return new Proxy({ __is_proxy__: true }, {
+        get: (obj, prop) => {
+          let target;
+          if (definition.isRequestScope()) {
+            target = this.context.registry.getObject(definition.id);
+          } else if (definition.isSingletonScope()) {
+            target = this.singletonCache.get(definition.id);
+          } else {
+            target = this.context.get(definition.id);
+          }
+
+          if (target) {
+            if (typeof target[prop] === 'function') {
+              return target[prop].bind(target);
+            }
+            return target[prop];
+          }
+
+          return undefined;
+        }
+      });
+    }
+    return null;
+  }
+  /**
+   * 遍历依赖树判断是否循环依赖
+   * @param identifier 目标id
+   * @param definition 定义描述
+   */
+  public depthFirstSearch(identifier: string, definition: IObjectDefinition): boolean {
+    if (definition) {
+      if (definition.constructorArgs) {
+        const args = definition.constructorArgs.map(val => (val as ManagedReference).name);
+        if (args.indexOf(identifier) > -1) {
+          return true;
+        }
+      }
+      if (definition.properties) {
+        const keys = definition.properties.keys();
+        if (keys.indexOf(identifier) > -1) {
+          return true;
+        }
+        for (const key of keys) {
+          let iden = key;
+          const ref: ManagedReference = definition.properties.get(key);
+          if (ref && ref.name) {
+            iden = ref.name;
+          }
+          if (iden === identifier) {
+            return true;
+          }
+          let subDefinition = this.context.registry.getDefinition(iden);
+          if (!subDefinition && this.context.parent) {
+            subDefinition = this.context.parent.registry.getDefinition(iden);
+          }
+          if (this.depthFirstSearch(identifier, subDefinition)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 }

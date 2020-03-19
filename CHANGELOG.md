@@ -1,4 +1,56 @@
 
+1.8.5 / 2020-03-12
+==================
+
+  * fix: Merge pull request #40 from midwayjs/fix_circular_bug
+  * fix curcular problem bug
+
+1.8.4 / 2020-01-16
+==================
+
+  * Fix request context (#39)
+  * 修复request context 下的循环依赖问题
+  * modified
+
+1.8.3 / 2020-01-16
+==================
+
+  * fix: fix bug (#38)
+  * fix bug
+
+1.8.2 / 2020-01-16
+==================
+
+  * fix circular bug and fun bug (#37)
+  * modified
+  * modified readme
+  * modified tsconfig.json
+  * remove code
+  * fix circular bug and fun bug
+
+1.8.1 / 2019-12-20
+==================
+
+  * remove singleton ready init (#36)
+  * remove singleton ready init
+
+1.8.0 / 2019-12-16
+==================
+
+  * 解决循环引用问题以及提升测试覆盖率 (#33)
+  * remove 8
+  * add 12 and remove 9
+  * cnpm -> npm
+  * fix test case
+  * add co dep
+  * modified
+  * modified test case
+  * add test case
+  * refactor singleton init mode
+  * add test case
+  * add circular dependency support
+  * 循环依赖性处理
+
 1.7.7 / 2019-10-08
 ==================
 
